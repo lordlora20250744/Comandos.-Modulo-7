@@ -1,0 +1,236 @@
+Practica 1: compartir archivos entre linux utilizando NFS
+
+Servidor principal.
+sudo apt update
+sudo apt install nfs-kernel-server -y
+
+sudo mkdir -p /srv/OS3
+cd /srv/OS3
+
+sudo bash -c 'for i in {1..100}; do touch /srv/OS3/Adrian$i.txt; done'
+
+ls | wc -l
+
+sudo chown nobody:nogroup /srv/OS3
+sudo chmod 755 /srv/OS3
+
+sudo nano /etc/exports
+
+sudo exportfs -a
+sudo exportfs -v
+
+sudo systemctl restart nfs-server
+sudo systemctl enable nfs-server
+
+sudo ufw allow from 192.168.1.0/24 to any port nfs
+sudo ufw allow 2049
+sudo ufw reload
+
+Servidor cliente
+
+sudo apt update
+sudo apt install nfs-common -y
+
+sudo mkdir -p /mnt/OS3
+
+sudo mount 192.168.1.50:/srv/OS3 /mnt/OS3
+
+df -h
+
+ls /mnt/OS3
+
+MONTAJE AUTOMÁTICO
+
+sudo nano /etc/fstab
+
+192.168.1.50:/srv/OS3 /mnt/OS3 nfs defaults 0 0
+
+sudo umount /mnt/OS3
+sudo mount -a
+
+ls /mnt/OS3
+
+sudo reboot
+
+ls /mnt/OS3
+_______________________________________________________________
+
+Practica 2: Creacion de fileserver compatible con Windows utilizando SAMBA
+
+sudo apt update && sudo apt install samba -y
+
+sudo mkdir -p /srv/samba/OS3
+
+sudo groupadd smbgrupo
+
+sudo useradd -m -G smbgrupo sistemasO3
+
+sudo passwd sistemasO3
+
+sudo smbpasswd -a sistemasO3
+
+sudo smbpasswd -e sistemasO3
+
+sudo chown -R root:smbgrupo /srv/samba/OS3
+sudo chmod -R 770 /srv/samba/OS3
+
+sudo usermod -aG smbgrupo sistemas3
+newgrp smbgrupo
+
+sudo bash -c 'for i in {1..100}; do touch /srv/samba/OS3/adrian$i.txt; done'
+
+sudo nano /etc/samba/smb.conf
+
+Dentro del archivo agrega esto al final:
+
+[OS3]
+   path = /srv/samba/OS3
+   browseable = yes
+   read only = no
+   writable = yes
+   valid users = @smbgrupo
+   create mask = 0770
+   directory mask = 0770
+   force group = smbgrupo
+
+Y en [global] tener:
+
+server min protocol = SMB2
+client min protocol = SMB2
+
+Luego continúa:
+
+testparm
+
+sudo systemctl restart smbd
+
+sudo systemctl status smbd
+
+smbclient -L localhost -U sistemasO3
+
+ip a
+
+sudo ufw disable
+
+WINDOWS
+\\192.168.1.X\OS3
+
+Usuario:
+
+sistemasO3
+_________________________________________________________________
+
+Practica 3: Creacion de controlador de Dominio con cliente Windows
+
+sudo hostnamectl set-hostname dc
+
+sudo nano /etc/hosts
+CONTENIDO:
+ 127.0.0.1    localhost
+192.168.1.5 dc.so3.inet dc
+
+sudo systemctl disable --now systemd-resolved
+sudo unlink /etc/resolv.conf
+
+sudo nano /etc/resolv.conf
+# CONTENIDO:
+nameserver 192.168.100.14
+nameserver 8.8.8.8
+search so3.inet
+
+sudo chattr +i /etc/resolv.conf
+
+sudo apt update
+sudo apt install -y acl attr samba samba-dsdb-modules samba-vfs-modules smbclient winbind libpam-winbind libnss-winbind libpam-krb5 krb5-config krb5-user dnsutils chrony net-tools
+
+EN PANTALLA KERBEROS
+Poner so3.inet
+
+Deshabilitar servicios de Samba que no se usan en AD DC
+sudo systemctl disable --now smbd nmbd winbind
+
+sudo systemctl unmask samba-ad-dc
+sudo systemctl enable --now samba-ad-dc
+
+
+sudo mv /etc/samba/smb.conf /etc/samba/smb.conf.orig
+
+sudo samba-tool domain provision:
+realm=SO3.INET 
+domain=SO3 
+server-role=dc 
+dns-backend=SAMBA_INTERNAL 
+dns-forwarder=8.8.8.8 
+adminpass='Admin123'
+
+sudo mv /etc/krb5.conf /etc/krb5.conf.orig
+sudo cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+
+Reiniciar Samba AD DC
+sudo systemctl restart samba-ad-dc
+sudo systemctl status samba-ad-dc
+
+sudo chown root:_chrony /var/lib/samba/ntp_signd/
+sudo chmod 750 /var/lib/samba/ntp_signd/
+
+sudo nano /etc/chrony/chrony.conf
+ AGREGAR AL FINAL:
+# Samba AD-DC NTP
+bindcmdaddress 192.168.1.5
+ allow        192.168.1.0/24
+ntpsigndsocket /var/lib/samba/ntp_signd
+
+sudo systemctl restart chronyd
+sudo systemctl status chronyd
+
+ Comprobar resolución DNS interna
+host -t A dc.so3.inet
+
+lista de recursos compartidos de Samba
+smbclient -L so3.inet -N
+
+Autenticarse en Kerberos con el usuario administrador del dominio
+kinit administrator@SO3.INET
+
+ticket Kerberos
+klist
+
+carpeta netlogon
+sudo smbclient //localhost/netlogon -U 'administrator'
+
+
+sudo samba-tool user create lanegracubana Lord20250744 --login-shell=/bin/bash
+
+sudo samba-tool user list
+
+
+WINDOWS 10
+
+
+Abrir configuración de red
+
+Cambiar el DNS y poner:
+
+192.168.1.7 (ip del windows)
+mask automática
+DNS: 192.168.1.5 (ip de la maquina principal)
+
+Presiona Win + R
+
+ Escribe:
+ncpa.cpl
+
+Para unir Windows al dominio
+
+Presiona:
+
+Win + R
+
+Escribe:
+
+sysdm.cpl
+
+Administrator
+
+colocar contraseña (Admin123)
+
